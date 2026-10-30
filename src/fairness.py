@@ -196,7 +196,7 @@ def run_fairness_analysis(
     axes[1].set_title("Good-Applicant Denial Rate (FPR) Across Policies",
                        fontsize=12, fontweight="bold")
     axes[1].set_ylabel("Rate of Good Applicants Wrongly Denied")
-    axes[1].set_ylim(0, 0.7)
+    axes[1].set_ylim(0, 1.05)
 
     plt.tight_layout()
     fairness_plot_path = os.path.join(plot_dir, "fairness_disparate_impact.png")

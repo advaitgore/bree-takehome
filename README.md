@@ -6,6 +6,8 @@ A reproducible, modular Python pipeline that trains, evaluates, and audits an ML
 
 ## Quickstart & Reproduction
 
+**Environment Note**: Tested with Python 3.12+ (Miniconda). Pinned dependencies (including `shap==0.54.1`) require Python 3.12 or newer.
+
 ```bash
 # 1. Install locked dependencies
 pip install -r requirements.txt
@@ -29,23 +31,34 @@ pytest tests/
 
 * **Default Prevalence**: The prompt mentions "~14% default", but the actual generator yields **27.25% overall** (545 of 2,000) and **29.7% on resolved loans** (545 of 1,836).
 * **Missing Documentation & Discrepancy**: 283 applicants (14.1%) submit zero documents, causing `documented_monthly_income` to be null. We impute this with 0.0 and flag it via `is_doc_missing = 1`. In the full dataset, among the 1,717 applications with documentation, 85 show an income discrepancy ratio $\ge 2.5\times$ and 56 show $\ge 3.0\times$. The rule's 10% tolerance boundary on stated income corresponds to an upper ratio of $1 / 0.9 \approx 1.111$.
-* **Ongoing Applications**: In the generator script, `ongoing` status is assigned independently after latent outcomes are generated, making label availability **Missing Completely At Random (MCAR) by construction**. Excluding ongoing loans ($N=164$) from supervised training causes zero selection bias in expectation. In production lending, however, excluding immature loans introduces seasoning/survivorship bias.
+* **Ongoing Applications**: In the generator script, `ongoing` status is assigned independently after latent outcomes are generated, making label availability **Missing Completely At Random (MCAR) by construction**. Excluding ongoing loans ($N=164$) from supervised training causes zero selection bias in expectation. In production, excluding unresolved loans can introduce seasoning or selection bias, depending on the outcome horizon and cohort construction.
 * **Why No Survival Analysis**: `days_to_default` was generated as uniform random integers (`randint(15, 180)`) independent of risk, with no observation windows or censoring dates for non-defaulters. Fitting survival models on this variable is invalid.
 * **Leakage Controls & Single Frozen Split**: Resolved applications ($N=1{,}836$) are split into a stratified 75/25 holdout (1,377 train / 459 test, seed 42). Target (`actual_outcome`), proxy duration (`days_to_default`), identifiers, and rule decisions are strictly excluded from features. For logistic regression, preprocessing is cross-validated inside the hyperparameter grid search (`GridSearchCV`) to avoid internal scaling leakage across CV folds.
 
 ---
 
-### 2. Candidate Models & Operating Threshold
+### 2. Candidate Models, Feature Importance & Operating Threshold
 
 * **Architectures Tested**:
   1. *Regularized Logistic Regression*: L2 penalty tuned via 5-fold CV ($C = 0.1668$).
   2. *Shallow XGBoost*: Constrained to `max_depth=3`, `subsample=0.85`, `colsample_bytree=0.85`, `min_child_weight=3`, `learning_rate=0.05`, 60 estimators.
+* **Feature Importance (TreeSHAP)**:
+  Examining global mean absolute SHAP values on the holdout (`plots/shap_feature_importance.png`) reveals that default risk is driven primarily by:
+  1. `loan_to_income_ratio` (0.508 mean |SHAP| in log-odds)
+  2. `doc_income_imputed` (0.283 log-odds)
+  3. `bank_has_overdrafts` (0.201 log-odds)
+  4. `income_discrepancy_ratio` (0.099 log-odds)
+  5. `bank_ending_balance` (0.097 log-odds)
+  These attributions verify that the tree model learned risk directly from cash-flow capacity and liquidity distress rather than spurious noise.
 * **Single Shared Operating Threshold (0.35)**:
-  Both ML models are evaluated at an explicit decision threshold of **0.35**, chosen as a balanced operating point approximating the training default prevalence (~30%). This threshold is defined once in `src/models.py` and passed to all downstream evaluation, fairness, and explainability modules. It was selected prior to test-set inspection and is **not an EV-optimized threshold** (under $M=\$100, L=\$1{,}000$, a pure risk-neutral expected value policy would approve only when $p < \frac{100}{100+1000} \approx 9.1\%$).
+  Both ML models are evaluated at an illustrative, non-optimized decision threshold of **0.35**, approximating the training default prevalence (~30%). This threshold is defined once in `src/models.py` and passed to all downstream evaluation, fairness, and explainability modules. It is **not an EV-optimized threshold** (under $M=\$100, L=\$1{,}000$, a pure risk-neutral expected value policy would approve only when $p < \frac{100}{100+1000} \approx 9.1\%$).
 
 ---
 
 ### 3. Model Performance & Economic Comparison
+
+#### Policy Mappings
+For binary evaluation, **Deny-Only** treats legacy denials as positive predictions (flagged for default) and groups reviews with approvals; **Review-or-Deny** treats both reviews and denials as positive predictions. These are analytical mappings, not observed final outcomes of manual review.
 
 #### Holdout Test Performance ($N=459$: 136 defaults, 323 repaid)
 
@@ -72,7 +85,7 @@ Scenario calculation assuming contribution margin $M=\$100$ per approved good lo
 | **Reject Everyone** (reference) | 0 | 0 | **$0** |
 
 #### Economic Analysis & Tradeoffs
-1. **XGBoost vs. Deny-Only Rule**: XGBoost catches $+42$ additional defaults while denying $+43$ additional good applicants. The incremental net value $\Delta EV = 42L - 43M$ is positive if and only if $\frac{L}{M} > \frac{43}{42} \approx 1.02$. Because consumer loan principal losses typically exceed origination margins by $5\times\text{--}15\times$, XGBoost substantially improves contribution over Deny-Only.
+1. **XGBoost vs. Deny-Only Rule**: XGBoost catches $+42$ additional defaults while denying $+43$ additional good applicants. Under the illustrative $L/M=10$ scenario, XGBoost improves contribution relative to Deny-Only. The improvement remains positive whenever $L/M > 43/42 \approx 1.02$.
 2. **Review-or-Deny vs. XGBoost**: Review-or-Deny catches $+20$ additional defaults but denies $+82$ good applicants ($\frac{L}{M} > \frac{82}{20} = 4.10$). Because our assumed $\frac{L}{M} = 10.0 > 4.10$, **Review-or-Deny exhibits the highest contribution of any active policy in this scenario**. XGBoost at 0.35 was chosen to balance precision and recall, not to maximize expected value under an extreme loss-ratio assumption.
 3. **Reject-Everyone Reference**: Under this simplified P&L, all active policies produce negative net contribution due to the high test default prevalence (29.7%) and severe loss assumption. Rejecting everyone generates \$0, but ceases all lending operations.
 4. **Governance**: Credit Risk leadership and the CRO decide the threshold based on risk appetite, target loss rates, and capital constraints.
@@ -91,7 +104,7 @@ Scenario calculation assuming contribution margin $M=\$100$ per approved good lo
 Per-group confusion counts sum exactly to the overall model performance counts: $\sum \text{TP} = 37 + 25 + 22 = 84$; $\sum \text{FP} = 40 + 22 + 6 = 68$.
 
 | Group | Count | Default Rate | Approval Rate | Good Denied Rate (FPR) | Default Catch Rate (Recall) | TP | FP | TN | FN |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Employed** | 271 | 25.8% | 71.6% | 19.9% | 52.9% | 37 | 40 | 161 | 33 |
 | **Self-Employed** | 140 | 27.1% | 66.4% | 21.6% | 65.8% | 25 | 22 | 80 | 13 |
 | **Unemployed** | 48 | 58.3% | 41.7% | 30.0% | 78.6% | 22 | 6 | 14 | 6 |
@@ -102,12 +115,12 @@ Per-group confusion counts sum exactly to the overall model performance counts: 
 - **XGBoost (Full Model)**: $66.4\% / 71.6\% = \mathbf{0.928}$
 - **XGBoost (Blinded: No Employment Feature)**: $65.7\% / 71.6\% = \mathbf{0.918}$
 
-#### Ablation: Removing Employment Status
+#### Ablation: Removing Employment Status & Recommendation
 Training a blinded model without `employment_status` on the identical frozen split yields:
 - 21 prediction disagreements out of 459 test instances (4.6%).
 - Maximum absolute probability difference: $0.0940$.
 - ROC-AUC: $0.7606$ (full) vs. $0.7557$ (blinded).
-- **Assessment**: Removing employment status eliminates its explicit use as a model input; proxy effects and legal implications remain outside the conclusions established here.
+- **Recommendation**: Removing employment status did not improve the measured approval ratio in this experiment (0.918 vs. 0.928) and slightly reduced observed ROC-AUC (0.7557 vs. 0.7606). I would not claim either variant is demonstrably fairer from this small holdout. Employment's explicit use should remain a policy-review question, with group outcomes monitored under either choice.
 
 ---
 
@@ -125,7 +138,8 @@ Using TreeSHAP in log-odds space (base value: $-0.8706$, additivity MAE: $0.0000
   $$\text{logit}(P_{\text{new}}) = \text{logit}(P_{\text{base}}) + \ln\left(\frac{\pi_{\text{new}}}{1 - \pi_{\text{new}}}\right) - \ln\left(\frac{\pi_{\text{base}}}{1 - \pi_{\text{base}}}\right)$$
 - If the recession induces covariate shift or concept drift, prior correction alone is insufficient. Unconstrained decision trees do not guarantee monotonic risk responses to balance declines without explicit monotonicity constraints.
 
-#### Deployment Checklist (Day-1 Failure Modes)
+#### Deployment Checklist (Day-1 Failure Modes) & Limitations
 1. **Reject Inference**: Production historical data only has repayment labels for *approved* applicants. Retraining solely on approved loans introduces severe truncation bias.
 2. **Feature Parity**: Verify bank transaction aggregations (e.g. deposit consistency, overdraft definitions) match production core banking APIs.
 3. **Shadow Mode**: Deploy the ML pipeline in silent shadow execution for 60–90 days to evaluate calibration and drift (monitoring Population Stability Index on key cash-flow features, flagging $PSI > 0.25$) before cutover.
+4. **Scope & Limitations**: Results are point estimates from one synthetic holdout; probability calibration and uncertainty in model differences have not been fully assessed.
