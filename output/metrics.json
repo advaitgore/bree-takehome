@@ -1,0 +1,64 @@
+{
+  "Deny-Only (Rule)": {
+    "TP (Defaults Caught)": 42,
+    "FP (Good Wrongly Denied)": 25,
+    "TN (Good Approved)": 298,
+    "FN (Defaults Slipped)": 94,
+    "Precision": 0.6268656716417911,
+    "Recall": 0.3088235294117647,
+    "F1": 0.41379310344827586,
+    "FPR": 0.07739938080495357,
+    "FNR": 0.6911764705882353,
+    "Total Test Count": 459,
+    "ROC-AUC": 0.7253004917137134,
+    "PR-AUC": 0.5493775786540915
+  },
+  "Review-or-Deny (Rule)": {
+    "TP (Defaults Caught)": 104,
+    "FP (Good Wrongly Denied)": 150,
+    "TN (Good Approved)": 173,
+    "FN (Defaults Slipped)": 32,
+    "Precision": 0.4094488188976378,
+    "Recall": 0.7647058823529411,
+    "F1": 0.5333333333333333,
+    "FPR": 0.46439628482972134,
+    "FNR": 0.23529411764705882,
+    "Total Test Count": 459,
+    "ROC-AUC": 0.7253004917137134,
+    "PR-AUC": 0.5493775786540915
+  },
+  "Logistic Regression (thresh=0.35)": {
+    "TP (Defaults Caught)": 77,
+    "FP (Good Wrongly Denied)": 85,
+    "TN (Good Approved)": 238,
+    "FN (Defaults Slipped)": 59,
+    "Precision": 0.47530864197530864,
+    "Recall": 0.5661764705882353,
+    "F1": 0.5167785234899329,
+    "FPR": 0.2631578947368421,
+    "FNR": 0.4338235294117647,
+    "Total Test Count": 459,
+    "ROC-AUC": 0.7273037698051357,
+    "PR-AUC": 0.5262494327621293
+  },
+  "XGBoost (thresh=0.35)": {
+    "TP (Defaults Caught)": 84,
+    "FP (Good Wrongly Denied)": 68,
+    "TN (Good Approved)": 255,
+    "FN (Defaults Slipped)": 52,
+    "Precision": 0.5526315789473685,
+    "Recall": 0.6176470588235294,
+    "F1": 0.5833333333333334,
+    "FPR": 0.21052631578947367,
+    "FNR": 0.38235294117647056,
+    "Total Test Count": 459,
+    "ROC-AUC": 0.7606196503369149,
+    "PR-AUC": 0.5752897540859944
+  },
+  "_meta": {
+    "operating_threshold": 0.35,
+    "test_n": 459,
+    "test_defaults": 136,
+    "test_repaid": 323
+  }
+}

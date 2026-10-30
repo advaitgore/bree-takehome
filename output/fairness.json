@@ -1,0 +1,166 @@
+{
+  "deny_only_rule": [
+    {
+      "group": "employed",
+      "count": 271,
+      "actual_default_rate": 0.2583,
+      "approval_rate": 0.9336,
+      "good_applicant_denial_rate": 0.0448,
+      "default_catch_rate": 0.1286,
+      "TP": 9,
+      "FP": 9,
+      "TN": 192,
+      "FN": 61
+    },
+    {
+      "group": "self_employed",
+      "count": 140,
+      "actual_default_rate": 0.2714,
+      "approval_rate": 0.8,
+      "good_applicant_denial_rate": 0.098,
+      "default_catch_rate": 0.4737,
+      "TP": 18,
+      "FP": 10,
+      "TN": 92,
+      "FN": 20
+    },
+    {
+      "group": "unemployed",
+      "count": 48,
+      "actual_default_rate": 0.5833,
+      "approval_rate": 0.5625,
+      "good_applicant_denial_rate": 0.3,
+      "default_catch_rate": 0.5357,
+      "TP": 15,
+      "FP": 6,
+      "TN": 14,
+      "FN": 13
+    }
+  ],
+  "review_deny_rule": [
+    {
+      "group": "employed",
+      "count": 271,
+      "actual_default_rate": 0.2583,
+      "approval_rate": 0.5646,
+      "good_applicant_denial_rate": 0.3682,
+      "default_catch_rate": 0.6286,
+      "TP": 44,
+      "FP": 74,
+      "TN": 127,
+      "FN": 26
+    },
+    {
+      "group": "self_employed",
+      "count": 140,
+      "actual_default_rate": 0.2714,
+      "approval_rate": 0.3714,
+      "good_applicant_denial_rate": 0.549,
+      "default_catch_rate": 0.8421,
+      "TP": 32,
+      "FP": 56,
+      "TN": 46,
+      "FN": 6
+    },
+    {
+      "group": "unemployed",
+      "count": 48,
+      "actual_default_rate": 0.5833,
+      "approval_rate": 0.0,
+      "good_applicant_denial_rate": 1.0,
+      "default_catch_rate": 1.0,
+      "TP": 28,
+      "FP": 20,
+      "TN": 0,
+      "FN": 0
+    }
+  ],
+  "xgb_full": [
+    {
+      "group": "employed",
+      "count": 271,
+      "actual_default_rate": 0.2583,
+      "approval_rate": 0.7159,
+      "good_applicant_denial_rate": 0.199,
+      "default_catch_rate": 0.5286,
+      "TP": 37,
+      "FP": 40,
+      "TN": 161,
+      "FN": 33
+    },
+    {
+      "group": "self_employed",
+      "count": 140,
+      "actual_default_rate": 0.2714,
+      "approval_rate": 0.6643,
+      "good_applicant_denial_rate": 0.2157,
+      "default_catch_rate": 0.6579,
+      "TP": 25,
+      "FP": 22,
+      "TN": 80,
+      "FN": 13
+    },
+    {
+      "group": "unemployed",
+      "count": 48,
+      "actual_default_rate": 0.5833,
+      "approval_rate": 0.4167,
+      "good_applicant_denial_rate": 0.3,
+      "default_catch_rate": 0.7857,
+      "TP": 22,
+      "FP": 6,
+      "TN": 14,
+      "FN": 6
+    }
+  ],
+  "xgb_blinded": [
+    {
+      "group": "employed",
+      "count": 271,
+      "actual_default_rate": 0.2583,
+      "approval_rate": 0.7159,
+      "good_applicant_denial_rate": 0.209,
+      "default_catch_rate": 0.5,
+      "TP": 35,
+      "FP": 42,
+      "TN": 159,
+      "FN": 35
+    },
+    {
+      "group": "self_employed",
+      "count": 140,
+      "actual_default_rate": 0.2714,
+      "approval_rate": 0.6571,
+      "good_applicant_denial_rate": 0.2255,
+      "default_catch_rate": 0.6579,
+      "TP": 25,
+      "FP": 23,
+      "TN": 79,
+      "FN": 13
+    },
+    {
+      "group": "unemployed",
+      "count": 48,
+      "actual_default_rate": 0.5833,
+      "approval_rate": 0.4583,
+      "good_applicant_denial_rate": 0.25,
+      "default_catch_rate": 0.75,
+      "TP": 21,
+      "FP": 5,
+      "TN": 15,
+      "FN": 7
+    }
+  ],
+  "approval_ratios": {
+    "Deny-Only (Rule)": 0.8568980291345331,
+    "Review-or-Deny (Rule)": 0.6578108395324124,
+    "XGBoost (Full Model)": 0.9279228942589748,
+    "XGBoost (Blinded: No Employ.)": 0.9178656236904597
+  },
+  "ablation_comparison": {
+    "n_predictions_disagree": 21,
+    "max_abs_prob_difference": 0.094,
+    "roc_auc_full_model": 0.7606,
+    "roc_auc_blinded_model": 0.7557
+  }
+}

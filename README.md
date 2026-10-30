@@ -1,253 +1,131 @@
 # Bree ML Take-Home: Loan Underwriting Prototype
 
-A reproducible, modular Python pipeline that trains, evaluates, and audits an ML underwriting model against Bree's legacy rule-based system. The emphasis is on **honest reasoning, leakage prevention, and clearly qualified conclusions**—not superficial sophistication.
+A reproducible, modular Python pipeline that trains, evaluates, and audits an ML underwriting model against Bree's legacy rule-based scoring system. Emphasizes **methodological consistency, honest economic modeling, and grounded reasoning**.
 
 ---
 
-## Quickstart
+## Quickstart & Reproduction
 
 ```bash
+# 1. Install locked dependencies
 pip install -r requirements.txt
-python run_pipeline.py        # generates data, plots, and prints all results
+
+# 2. Run the end-to-end pipeline (data generation, EDA, training, evaluation, fairness, SHAP)
+python run_pipeline.py
+
+# 3. Run consistency test suite
+pytest tests/
 ```
 
-All plots are saved to `plots/`. The synthetic dataset is committed at `data/loan_applications.csv`.
-
-**Environment note**: Tested with Python 3.12.9 (Miniconda). The `run_pipeline.py` script is the single reproducible entry point.
-
----
-
-## Written Summary
-
-### 1. Data Handling and Generator Audit
-
-#### Generator Audit vs. Prompt Discrepancies
-
-Two notable differences exist between the prompt's prose description and the actual generator:
-
-1. **Default prevalence**: The prompt states "~14% default." The seed-42 dataset yields **27.25% overall** (545/2,000) and **29.7% of resolved loans** (545/1,836). The prose likely describes an overall rate including ongoing loans under different assumptions; the generator produces a materially higher resolved-loan rate.
-
-2. **Income discrepancy magnitude**: The generator assigns documented income as 20%–40% of stated income for the 5% latent misrepresentation group, producing discrepancy ratios of **2.5×–5.0×**, not exactly 3× as the prose implies. Additionally, 14.1% of applicants (283 of 2,000) submit zero documents; their membership in the misrepresentation group cannot be observed. On the resolved test set: **85 applications show discrepancy ≥ 2.5×** and **56 show ≥ 3.0×**.
-
-#### Missing Documentation
-
-`documented_monthly_income` is null for all 283 applicants with `num_documents_submitted == 0`. Rather than dropping rows or imputing with the training mean, we create a binary `is_doc_missing` indicator and set `doc_income_imputed = 0.0`. When documents are missing, `income_discrepancy_ratio` is set to a neutral 1.0. See `plots/eda_missing_and_discrepancy.png`.
-
-#### Ongoing Applications
-
-**In this synthetic dataset**: `ongoing = random() < 0.08` is drawn *after* latent default status is determined and independently of all applicant characteristics. Label availability is **Missing Completely At Random (MCAR) by construction**. Excluding ongoing applications from supervised training and evaluation introduces zero selection bias in expectation.
-
-**In real-world underwriting**: Excluding unresolved loans can introduce seasoning or selection bias when label availability depends on cohort age or risk profile. Appropriate treatment requires a defined outcome horizon and valid follow-up information. Newer cohorts have not had sufficient exposure time to mature, so excluding them selectively over-indexes on older, seasoned loans or early defaults. We document this caveat but do not attempt to model it here because the synthetic data does not exhibit it.
-
-**Why no survival analysis**: `days_to_default` is assigned via `randint(15, 180)` independently of borrower risk. There are no censoring times for non-defaulted loans. Applying survival modeling to this variable would be scientifically invalid.
-
-#### Evaluation Protocol and Leakage Controls
-
-Resolved applications (N=1,836) are filtered and frozen into a stratified 75/25 train/test split (1,377 train / 459 test, `random_state=42`, stratified on outcome). The split is created before any model is fit and held constant throughout. The target (`actual_outcome`), leakage columns (`days_to_default`, `applicant_id`), and rule-system outputs (`rule_based_score`, `rule_based_decision`) are strictly excluded from the predictor matrix via an explicit allowlist. All preprocessing (scaling, encoding) is fitted exclusively on training indices and then applied to test indices.
-
-Smoke tests performed: pipeline executes without error; dataset row count = 2,000 (verified); test set size = 459 (verified); no target column present in feature matrix (verified by allowlist); all plots written to disk.
+- **Plots**: `plots/`
+- **Machine-readable metrics**: `output/metrics.json` and `output/fairness.json`
+- **Data**: `data/loan_applications.csv` (synthetic dataset, seed 42, $N=2{,}000$)
 
 ---
 
-### 2. Model Selection and Feature Attributions
+## Executive Summary
 
-#### Architecture Choices
+### 1. Data Handling & Generator Audit
 
-The generator computes default probability as a logistic function of a linear risk composite:
-
-$$\text{default\_prob} = \frac{1}{1 + e^{-5 \times (\text{real\_risk} - 0.45)}}$$
-
-Given this functional form, two architectures were tested:
-
-1. **Regularized Logistic Regression** — a transparent linear model whose decision surface closely matches the generator's structure. L2 penalty selected via 5-fold cross-validation (`LogisticRegressionCV`). Useful as a linear baseline and for interpretability comparison.
-
-2. **Shallow XGBoost** — constrained to `max_depth=3`, `subsample=0.85`, `learning_rate=0.05`, 60 estimators. Shallow depth limits overfitting on 1,377 training rows while allowing the model to capture threshold-like non-linearities (e.g., `loan_amount ≤ 0.3 × stated_income`).
-
-Both models use identical features and preprocessing, evaluated on identical test indices.
-
-#### Feature Importance (TreeSHAP)
-
-SHAP values are in **log-odds units** relative to the TreeExplainer base value. Positive attribution increases predicted default probability. The top drivers on the holdout set (`plots/shap_feature_importance.png`):
-
-| Rank | Feature | Mean \|SHAP\| |
-|------|---------|---------------|
-| 1 | `loan_to_income_ratio` | 0.508 |
-| 2 | `doc_income_imputed` | 0.283 |
-| 3 | `bank_has_overdrafts` | 0.201 |
-| 4 | `income_discrepancy_ratio` | 0.099 |
-| 5 | `bank_ending_balance` | 0.097 |
-
-These align closely with the generator's true risk factors, providing a consistency check that the model is learning genuine signal rather than proxies or artifacts.
+* **Default Prevalence**: The prompt mentions "~14% default", but the actual generator yields **27.25% overall** (545 of 2,000) and **29.7% on resolved loans** (545 of 1,836).
+* **Missing Documentation & Discrepancy**: 283 applicants (14.1%) submit zero documents, causing `documented_monthly_income` to be null. We impute this with 0.0 and flag it via `is_doc_missing = 1`. In the full dataset, among the 1,717 applications with documentation, 85 show an income discrepancy ratio $\ge 2.5\times$ and 56 show $\ge 3.0\times$. The rule's 10% tolerance boundary on stated income corresponds to an upper ratio of $1 / 0.9 \approx 1.111$.
+* **Ongoing Applications**: In the generator script, `ongoing` status is assigned independently after latent outcomes are generated, making label availability **Missing Completely At Random (MCAR) by construction**. Excluding ongoing loans ($N=164$) from supervised training causes zero selection bias in expectation. In production lending, however, excluding immature loans introduces seasoning/survivorship bias.
+* **Why No Survival Analysis**: `days_to_default` was generated as uniform random integers (`randint(15, 180)`) independent of risk, with no observation windows or censoring dates for non-defaulters. Fitting survival models on this variable is invalid.
+* **Leakage Controls & Single Frozen Split**: Resolved applications ($N=1{,}836$) are split into a stratified 75/25 holdout (1,377 train / 459 test, seed 42). Target (`actual_outcome`), proxy duration (`days_to_default`), identifiers, and rule decisions are strictly excluded from features. For logistic regression, preprocessing is cross-validated inside the hyperparameter grid search (`GridSearchCV`) to avoid internal scaling leakage across CV folds.
 
 ---
 
-### 3. Results, Baseline Comparison, and Business Tradeoffs
+### 2. Candidate Models & Operating Threshold
 
-#### Holdout Performance (N = 459 resolved applications; 136 defaults, 323 repaid)
-
-| Policy / Model | ROC-AUC | PR-AUC | Precision | Recall | F1 | FPR | FNR | Defaults Caught | Good Denied |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Deny-Only (Rule)** | 0.725 | 0.549 | **0.627** | 0.309 | 0.414 | **0.077** | 0.691 | 42 | 25 |
-| **Review-or-Deny (Rule)** | 0.725 | 0.549 | 0.409 | **0.765** | 0.533 | 0.464 | 0.235 | **104** | 150 |
-| **Logistic Regression (0.35)** | 0.727 | 0.526 | 0.481 | 0.551 | 0.514 | 0.251 | 0.449 | 75 | 81 |
-| **XGBoost (0.35)** | **0.761** | **0.575** | 0.568 | 0.581 | **0.575** | 0.186 | 0.419 | 79 | 60 |
-
-*(See `plots/roc_pr_curves.png` and `plots/confusion_matrices.png`.)*
-
-**Honest interpretation**: XGBoost achieved the strongest observed ranking performance on this holdout (ROC-AUC 0.761 vs. 0.725). The Deny-Only rule achieves the highest precision (0.627) and lowest good-applicant rejection rate. Policy preference depends on the assumed economics, how "flagged for review" loans are handled operationally, and volume constraints — not AUC alone.
-
-#### Threshold Selection
-
-The 0.35 threshold was selected as a **balanced operating point approximating the training default prevalence (~30%)**, not via cost-sensitive optimization. It was chosen before inspecting test-set results. Both ML models use the same threshold for comparability.
-
-Under a pure expected-value criterion, approval is favorable when the predicted probability $p < M / (M + L)$. With $M = \$100$ and $L = \$1{,}000$, that implies a threshold near **9%–13%** — well below 0.35. The 0.35 threshold therefore prioritizes recall/precision balance over expected-value maximization. Proper cost-sensitive threshold selection belongs within the development procedure on a validation set, not after viewing test results.
-
-#### Illustrative Policy Contribution (Scenario Calculation)
-
-**Assumptions (explicitly stated; not validated against real lender economics):**
-- $M = \$100$ per approved good loan (origination fees and net interest, illustrative)
-- $L = \$1{,}000$ per approved defaulted loan (principal charge-off, illustrative)
-- Constant per loan; recoveries, review costs, and funding costs omitted
-- All rejected good applicants treated as permanently lost (no off-take modeled)
-
-| Policy | Good Approved | Defaults Approved | Illustrative Contribution |
-|:---|:---:|:---:|:---:|
-| Approve Everyone (reference) | 323 | 136 | **−\$103,700** |
-| Deny-Only (Rule) | 298 | 94 | −\$64,200 |
-| Logistic Regression (0.35) | 242 | 61 | −\$36,800 |
-| XGBoost (0.35) | 263 | 57 | −\$30,700 |
-| Review-or-Deny (Rule) | 173 | 32 | −\$14,700 |
-| Reject Everyone (reference) | 0 | 0 | **\$0** |
-
-These are retrospective scenario calculations using holdout counts — not actual lender profit.
-
-**Key qualifications**:
-
-- **XGBoost (0.35) is not the best displayed policy under these illustrative assumptions.** Review-or-Deny catches +25 more defaults than XGBoost while denying +90 more good applicants. This yields a break-even L/M of **3.6×** — below the assumed 10×. Under our illustrative economics, Review-or-Deny has the highest contribution of any active policy.
-- **XGBoost improves contribution relative to the Deny-Only baseline** (from −\$64,200 to −\$30,700) — a meaningful improvement that does not require a specific L/M assumption to validate.
-- **No policy produces positive net contribution** under these assumptions. The reference "reject everyone" policy at \$0 dominates all active policies, which is a well-known artifact of simplified credit P&L models that ignore loan volume, credit access obligations, and customer lifetime value. Use the reject-all reference to expose this mismatch rather than as a policy recommendation.
-- Absolute profitability is not established by this analysis. Real lender economics require validated margins, recoveries, cost of funds, and operational costs.
-
-#### Business Tradeoff: Who Decides?
-
-**Risk leadership** (Credit Risk Committee, CRO) defines the loss tolerance and target approval volume. The ML engineer's responsibility is to surface the Pareto operating curve across all thresholds — not to pick the operating point. The engineer should present the full contribution table above and let stakeholders choose based on their risk appetite, capital constraints, and regulatory environment.
+* **Architectures Tested**:
+  1. *Regularized Logistic Regression*: L2 penalty tuned via 5-fold CV ($C = 0.1668$).
+  2. *Shallow XGBoost*: Constrained to `max_depth=3`, `subsample=0.85`, `colsample_bytree=0.85`, `min_child_weight=3`, `learning_rate=0.05`, 60 estimators.
+* **Single Shared Operating Threshold (0.35)**:
+  Both ML models are evaluated at an explicit decision threshold of **0.35**, chosen as a balanced operating point approximating the training default prevalence (~30%). This threshold is defined once in `src/models.py` and passed to all downstream evaluation, fairness, and explainability modules. It was selected prior to test-set inspection and is **not an EV-optimized threshold** (under $M=\$100, L=\$1{,}000$, a pure risk-neutral expected value policy would approve only when $p < \frac{100}{100+1000} \approx 9.1\%$).
 
 ---
 
-### 4. Fairness and Employment Group Disparities
+### 3. Model Performance & Economic Comparison
 
-#### What the Generator Reveals
+#### Holdout Test Performance ($N=459$: 136 defaults, 323 repaid)
 
-The rule system imposes two compounding penalties on self-employed applicants:
+| Policy / Model | ROC-AUC | PR-AUC | Precision | Recall | F1 | FPR | FNR | Defaults Caught (TP) | Good Denied (FP) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Deny-Only (Rule)** | 0.725 | 0.549 | **0.627** | 0.309 | 0.414 | **0.077** | 0.691 | 42 | **25** |
+| **Review-or-Deny (Rule)** | 0.725 | 0.549 | 0.409 | **0.765** | 0.533 | 0.464 | **0.235** | **104** | 150 |
+| **Logistic Regression (0.35)** | 0.727 | 0.526 | 0.475 | 0.566 | 0.517 | 0.263 | 0.434 | 77 | 85 |
+| **XGBoost (0.35)** | **0.761** | **0.575** | 0.553 | 0.618 | **0.583** | 0.211 | 0.382 | 84 | 68 |
 
-1. **Direct penalty**: `emp_score` assigns self-employed applicants 60/100 points vs. 100/100 for employed. With a 15% weight, this is a **−6.0 point penalty on the total score** out of 100.
+*XGBoost achieved the highest ROC-AUC (0.761 vs. 0.725) and PR-AUC (0.575 vs. 0.549). Deny-Only achieved highest precision (0.627) and lowest good-borrower rejection.*
 
-2. **Indirect proxy**: `bank_has_consistent_deposits` is generated at 80% frequency for employed vs. 40% for self-employed. The rule assigns 30 component points (×15% = 4.5 total points) to deposit consistency — **even though deposit consistency does not appear in the generator's true default probability equation.** This creates an additional, uncompensated penalty.
+#### Illustrative Contribution Comparison
 
-Other generated differences (income distributions, balance levels) may also contribute to the observed approval gap. A formal decomposition would require controlling for those factors individually.
+Scenario calculation assuming contribution margin $M=\$100$ per approved good loan, principal loss $L=\$1{,}000$ per approved defaulted loan, zero recovery, and no volume utility. Rejection yields \$0.
 
-#### Full Employment Group Audit (XGBoost at 0.35)
+| Policy | Good Approved (TN) | Defaults Approved (FN) | Illustrative Contribution |
+| :--- | :---: | :---: | :---: |
+| **Approve Everyone** (reference) | 323 | 136 | −$103,700 |
+| **Deny-Only (Rule)** | 298 | 94 | −$64,200 |
+| **Logistic Regression (0.35)** | 238 | 59 | −$35,200 |
+| **XGBoost (0.35)** | 255 | 52 | −$26,500 |
+| **Review-or-Deny (Rule)** | 173 | 32 | **−$14,700** |
+| **Reject Everyone** (reference) | 0 | 0 | **$0** |
 
-| Group | Count | Default Rate | Approval Rate | Good Denied Rate (FPR) | Default Catch Rate |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| Employed | 271 | 25.8% | 70.5% | 21.9% | 51.4% |
-| Self-employed | 140 | 27.1% | 67.1% | 21.6% | 63.2% |
-| Unemployed | 48 | 58.3% | 45.8% | 30.0% | 71.4% |
-
-| Group | Deny-Only Approval Rate | Review-or-Deny Approval Rate |
-|:---|:---:|:---:|
-| Employed | 93.4% | 50.6% |
-| Self-employed | 80.0% | 40.0% |
-| Unemployed | 56.3% | 18.8% |
-
-**Self-employed/employed approval ratios** (4/5ths rule benchmark: 0.80):
-- Deny-Only (Rule): **0.857** ✓
-- Review-or-Deny (Rule): **0.658** ✗ (disparate impact)
-- XGBoost Full Model: **0.953** ✓
-- XGBoost Blinded (no employment feature): **0.953** ✓
-
-**Interpretation**: On this evaluated sample, the selected ML model reduced the observed employed/self-employed approval-rate gap, and good-applicant rejection rates are similar across groups (21.9% vs. 21.6%). This does not establish fairness across all groups, metrics, or future populations.
-
-The unemployed group (N=48 in test) has a substantially higher default rate (58.3% vs. ~26% for other groups) and correspondingly higher denial rates. The small sample size limits conclusions for this group.
-
-#### Ablation: Employment Feature Removal
-
-Training XGBoost without `employment_status` as an input feature produces identical approval rates and predictions on this test set. The model appears to price risk through cash-flow indicators (overdrafts, balances, income ratios) without needing the employment label.
-
-**Qualified claim**: Removing employment status eliminates its explicit use as a model input. The employment-excluded model retained similar observed approval parity in this experiment. However, proxy effects (deposit consistency, balance levels) are correlated with employment status and may carry residual disparate impact. Full proxy analysis would require additional tools.
-
-**Recommendation**: Remove `employment_status` from the model. It contributes negligible predictive lift (identical ROC-AUC), and removing it eliminates potential disparate-treatment claims while making the self-employed approval gap harder to attribute directly to the model.
+#### Economic Analysis & Tradeoffs
+1. **XGBoost vs. Deny-Only Rule**: XGBoost catches $+42$ additional defaults while denying $+43$ additional good applicants. The incremental net value $\Delta EV = 42L - 43M$ is positive if and only if $\frac{L}{M} > \frac{43}{42} \approx 1.02$. Because consumer loan principal losses typically exceed origination margins by $5\times\text{--}15\times$, XGBoost substantially improves contribution over Deny-Only.
+2. **Review-or-Deny vs. XGBoost**: Review-or-Deny catches $+20$ additional defaults but denies $+82$ good applicants ($\frac{L}{M} > \frac{82}{20} = 4.10$). Because our assumed $\frac{L}{M} = 10.0 > 4.10$, **Review-or-Deny exhibits the highest contribution of any active policy in this scenario**. XGBoost at 0.35 was chosen to balance precision and recall, not to maximize expected value under an extreme loss-ratio assumption.
+3. **Reject-Everyone Reference**: Under this simplified P&L, all active policies produce negative net contribution due to the high test default prevalence (29.7%) and severe loss assumption. Rejecting everyone generates \$0, but ceases all lending operations.
+4. **Governance**: Credit Risk leadership and the CRO decide the threshold based on risk appetite, target loss rates, and capital constraints.
 
 ---
 
-### 5. Explainability, Regulatory Audit, and Production Risk
+### 4. Fairness & Employment Group Audit
 
-#### Regulatory Audit: "Why was this applicant denied?"
+#### Root Causes in the Rule Baseline
+- **Direct Penalty**: Self-employed applicants receive 60/100 on employment score vs. 100/100 for employed. Weighted at 15%, this is an automatic **6.0-point total score penalty**.
+- **Indirect Deposit Penalty**: Consistent deposits contributes 30 component points $\times$ 20% weight = **6.0 total points**. While employed applicants have an 80% consistency rate vs. 40% for self-employed, **deposit consistency does not appear in the true default generation equation**.
+- *(Note: Account balances are generated independently of employment; observed group balance differences reflect sample noise, not designed mechanisms).*
 
-The rule-based system is fully inspectable: score components and thresholds are deterministic and documented. ML predictions require post-hoc interpretation.
+#### Audit Across Groups (XGBoost at 0.35 on Test Set $N=459$)
 
-We implemented an **illustrative adverse-action reason prototype** (`src/explainability.py`) using TreeSHAP waterfall values. For each denied applicant, we extract the top positive SHAP contributors (positive = increases predicted default log-odds relative to the base value) and map them to human-readable phrases:
+Per-group confusion counts sum exactly to the overall model performance counts: $\sum \text{TP} = 37 + 25 + 22 = 84$; $\sum \text{FP} = 40 + 22 + 6 = 68$.
 
-- *APP-0311* (Denied, predicted prob 0.56): "Low or unverified documented income (+0.63 log-odds)", "High loan-to-income ratio (+0.37 log-odds)", "Low ending bank balance (+0.20 log-odds)".
-- *APP-1849* (Self-employed): Flagged for review by rule system (score 53.4) but approved by XGBoost (prob 0.26) due to healthy bank balance and no overdrafts; subsequently repaid.
+| Group | Count | Default Rate | Approval Rate | Good Denied Rate (FPR) | Default Catch Rate (Recall) | TP | FP | TN | FN |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Employed** | 271 | 25.8% | 71.6% | 19.9% | 52.9% | 37 | 40 | 161 | 33 |
+| **Self-Employed** | 140 | 27.1% | 66.4% | 21.6% | 65.8% | 25 | 22 | 80 | 13 |
+| **Unemployed** | 48 | 58.3% | 41.7% | 30.0% | 78.6% | 22 | 6 | 14 | 6 |
 
-**Important qualification**: These are illustrative reviewer reason codes, not legally compliant adverse-action notices. FCRA and ECOA adverse-action requirements mandate specific language, a defined process, and legal/compliance review. This prototype demonstrates the technical capability; legal review would be required before any production use.
+#### Self-Employed to Employed Approval Ratios (4/5ths reference = 0.80)
+- **Deny-Only (Rule)**: $80.0\% / 93.4\% = \mathbf{0.857}$
+- **Review-or-Deny (Rule)**: $37.1\% / 56.5\% = \mathbf{0.658}$ (disparity driven by conservative review gating)
+- **XGBoost (Full Model)**: $66.4\% / 71.6\% = \mathbf{0.928}$
+- **XGBoost (Blinded: No Employment Feature)**: $65.7\% / 71.6\% = \mathbf{0.918}$
+
+#### Ablation: Removing Employment Status
+Training a blinded model without `employment_status` on the identical frozen split yields:
+- 21 prediction disagreements out of 459 test instances (4.6%).
+- Maximum absolute probability difference: $0.0940$.
+- ROC-AUC: $0.7606$ (full) vs. $0.7557$ (blinded).
+- **Assessment**: Removing employment status eliminates its explicit use as a model input; proxy effects and legal implications remain outside the conclusions established here.
+
+---
+
+### 5. Explainability & Production Readiness
+
+#### Adverse Action Reason Prototype
+Using TreeSHAP in log-odds space (base value: $-0.8706$, additivity MAE: $0.000000$), positive values reflect factors increasing predicted default log-odds. Reasons are phrased neutrally without asserting unverified rule violations:
+- *Case 1 (True Positive illustration)*: `APP-0311` (Employed, Loan \$1,500, Balance \$0, Defaulted). Model prob: 0.56 (Denied). Top risk factors: Documented income level (+0.63 log-odds), Loan-to-income ratio (+0.37 log-odds), Bank ending balance (+0.20 log-odds).
+- *Case 2 (False Positive illustration)*: `APP-1344` (Self-employed, Loan \$1,500, Balance \$1,880, Repaid). Model prob: 0.38 (Denied). Top risk factors: Loan-to-income ratio (+0.35 log-odds), Documented income level (+0.28 log-odds). Illustrates the cost of threshold selection on borderline applicants.
+- *Case 3 (Fairness recovery illustration)*: `APP-1849` (Self-employed, Loan \$1,000, Balance \$2,320, Repaid). Rule: Flagged for review (score 53.4); Model: Approved (prob 0.26).
+- *Regulatory Note*: These represent prototype internal reviewer codes, not legally compliant FCRA/ECOA adverse-action notices.
 
 #### Macroeconomic Shift / Recession
+- **Label Shift**: Assumes class-conditional feature distributions remain invariant ($P_{\text{new}}(X \mid Y) = P_{\text{base}}(X \mid Y)$) while default prevalence $P(Y)$ increases. Under this assumption, predictions can be recalibrated via log-odds prior shift correction:
+  $$\text{logit}(P_{\text{new}}) = \text{logit}(P_{\text{base}}) + \ln\left(\frac{\pi_{\text{new}}}{1 - \pi_{\text{new}}}\right) - \ln\left(\frac{\pi_{\text{base}}}{1 - \pi_{\text{base}}}\right)$$
+- If the recession induces covariate shift or concept drift, prior correction alone is insufficient. Unconstrained decision trees do not guarantee monotonic risk responses to balance declines without explicit monotonicity constraints.
 
-If default prevalence increases substantially (e.g., due to recession) and applicant financial characteristics deteriorate:
-
-- **Rule system**: Deteriorating bank balances reduce the account-stability component score; applicants with `balance < threshold` or overdraft flags receive lower scores and may cross decision thresholds. The rule system does not automatically recalibrate — it applies the same weights under different distributional conditions.
-- **ML model**: Predicted probabilities increase as features deteriorate, which is the desired direction. However, the model is not calibrated for the new distribution. The prior-odds log-odds correction formula provides a proposed recalibration approach:
-
-$$\text{logit}(P_{\text{new}}) = \text{logit}(P_{\text{base}}) + \ln\!\left(\frac{\pi_{\text{new}}}{1 - \pi_{\text{new}}}\right) - \ln\!\left(\frac{\pi_{\text{base}}}{1 - \pi_{\text{base}}}\right)$$
-
-This correction is **contingent on the label-shift assumption** — that the feature-conditional default probability structure is unchanged, and only the marginal default rate has shifted. If the recession also changes which features predict default (a covariate shift or concept drift), this correction is insufficient. Neither policy has demonstrated recession robustness on real data.
-
-#### Day-1 Failure Modes if Deployed Tomorrow
-
-The first and most serious failure mode is **synthetic-to-real mismatch**: the model learned from a generator with known, simple structure. Real applicant data involves messier distributions, additional features, data pipeline errors, and more complex relationships. Before changing any decisions, I would:
-
-1. Validate feature definitions against real data pipelines (are `bank_ending_balance`, `income_discrepancy_ratio`, and `bank_has_overdrafts` computed the same way in production?).
-2. Evaluate calibration on real, appropriately matured cohorts with confirmed outcomes.
-3. Run shadow scoring — log model outputs for 60–90 days alongside the existing policy without changing decisions.
-4. Assess the **selective-label / reject-inference problem**: unlike this synthetic dataset where we observe outcomes for all 2,000 applicants (including those the rule model denied), real historical data only provides repayment outcomes for previously approved applicants. Denied applicants never generate default data, which biases training if the model is retrained on real historical data.
-5. Monitor input feature distributions weekly (e.g., overdraft frequency, balance levels) relative to training baseline — PSI > 0.25 on key features triggers a formal review.
-
----
-
-## Repository Structure
-
-```
-├── data/
-│   └── loan_applications.csv          # Synthetic dataset (seed 42, N=2,000)
-├── plots/
-│   ├── eda_missing_and_discrepancy.png
-│   ├── eda_outcomes_and_employment.png
-│   ├── roc_pr_curves.png
-│   ├── confusion_matrices.png
-│   ├── fairness_disparate_impact.png
-│   └── shap_feature_importance.png
-├── src/
-│   ├── __init__.py
-│   ├── generate_data.py               # Exact generator logic preserved
-│   ├── eda.py                         # Diagnostic EDA and generator audit
-│   ├── features.py                    # Predictor allowlist and leakage guards
-│   ├── models.py                      # Rule baseline, Logistic Regression, XGBoost
-│   ├── evaluate.py                    # Metrics, confusion matrices, contribution table
-│   ├── fairness.py                    # Employment group audit and ablation
-│   └── explainability.py              # TreeSHAP and illustrative reason codes
-├── run_pipeline.py                    # Single reproducible entry point
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Final Assessment
-
-XGBoost achieved the strongest observed ranking performance on the reported holdout (ROC-AUC 0.761 vs. 0.725 for the rule baseline). That does not by itself establish the best lending policy.
-
-Under the illustrative economic assumptions used here, the Review-or-Deny rule policy produces the highest scenario contribution among active policies — XGBoost at threshold 0.35 was selected for F1-balanced performance, not economic dominance. No active policy produces a positive net contribution under these simplified assumptions, which reflects the structural tension between loss avoidance and loan volume.
-
-Deployment decisions require validated probabilities on real data, explicit and defensible economic assumptions, consistent handling of flagged-for-review loans, a solution to the reject-inference problem, operational monitoring infrastructure, and legal/compliance review of the reason-code system. The findings here are a starting point for that conversation, not a production recommendation.
+#### Deployment Checklist (Day-1 Failure Modes)
+1. **Reject Inference**: Production historical data only has repayment labels for *approved* applicants. Retraining solely on approved loans introduces severe truncation bias.
+2. **Feature Parity**: Verify bank transaction aggregations (e.g. deposit consistency, overdraft definitions) match production core banking APIs.
+3. **Shadow Mode**: Deploy the ML pipeline in silent shadow execution for 60–90 days to evaluate calibration and drift (monitoring Population Stability Index on key cash-flow features, flagging $PSI > 0.25$) before cutover.
